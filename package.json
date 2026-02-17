@@ -1,0 +1,25 @@
+{
+  "name": "up-to-actual",
+  "version": "1.0.0",
+  "description": "Automated transaction sync between Up Bank (Australia) and Actual Budget",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test:up": "node src/test-up.js",
+    "test:actual": "node src/test-actual.js"
+  },
+  "keywords": [
+    "up-bank",
+    "actual-budget",
+    "budgeting",
+    "finance",
+    "automation",
+    "australia"
+  ],
+  "author": "Matt Romanes",
+  "license": "MIT",
+  "dependencies": {
+    "@actual-app/api": "^25.2.1",
+    "dotenv": "^16.4.7"
+  }
+}
