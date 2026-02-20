@@ -2,6 +2,20 @@ const { describe, it, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const { clearModuleCache } = require('./helpers/fixtures');
 
+/**
+ * Replace dotenv in the require cache with a no-op so that
+ * re-requiring config.js doesn't reload values from the real .env file.
+ */
+function stubDotenv() {
+  const dotenvPath = require.resolve('dotenv');
+  require.cache[dotenvPath] = {
+    id: dotenvPath,
+    filename: dotenvPath,
+    loaded: true,
+    exports: { config: () => {} },
+  };
+}
+
 describe('validateConfig', () => {
   let originalEnv;
   let exitMock;
@@ -9,6 +23,7 @@ describe('validateConfig', () => {
   beforeEach(() => {
     originalEnv = { ...process.env };
     exitMock = mock.method(process, 'exit', () => {});
+    stubDotenv();
     // Set all required vars
     process.env.UP_API_TOKEN = 'up:yeah:test-token';
     process.env.ACTUAL_SERVER_URL = 'https://test.pikapods.net';
@@ -21,6 +36,8 @@ describe('validateConfig', () => {
 
   afterEach(() => {
     process.env = originalEnv;
+    // Restore real dotenv
+    delete require.cache[require.resolve('dotenv')];
     mock.restoreAll();
   });
 
@@ -63,6 +80,7 @@ describe('config object', () => {
 
   beforeEach(() => {
     originalEnv = { ...process.env };
+    stubDotenv();
     process.env.UP_API_TOKEN = 'up:yeah:test-token';
     process.env.ACTUAL_SERVER_URL = 'https://test.pikapods.net';
     process.env.ACTUAL_PASSWORD = 'test-password';
@@ -73,6 +91,7 @@ describe('config object', () => {
 
   afterEach(() => {
     process.env = originalEnv;
+    delete require.cache[require.resolve('dotenv')];
   });
 
   it('reads UP_API_TOKEN into config.up.apiToken', () => {
