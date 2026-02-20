@@ -60,10 +60,11 @@ app.timer('syncTimer', {
 
   // Azure's built-in retry — mirrors the existing 5/15/45min pattern.
   // 1 initial attempt + 3 retries = 4 total (matches MAX_RETRIES=4).
+  // Intervals are in milliseconds as required by the v4 SDK.
   retry: {
     strategy: 'exponentialBackoff',
     maxRetryCount: 3,
-    minimumInterval: '00:05:00',
-    maximumInterval: '00:45:00',
+    minimumInterval: 5 * 60 * 1000,   // 5 minutes
+    maximumInterval: 45 * 60 * 1000,  // 45 minutes
   },
 });
