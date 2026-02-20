@@ -117,11 +117,10 @@ flowchart LR
 |---|---|---|
 | `id` | `imported_id` | Used for deduplication across syncs |
 | `attributes.description` | `payee_name` | Matched against AB's payee rules |
-| `attributes.amount.value` | `amount` | Converted from float to integer via `amountToInteger()` |
-| `attributes.amount.currencyCode` | — | Validated as AUD |
+| `attributes.amount.valueInBaseUnits` | `amount` | Integer cents — used directly (no float conversion) |
 | `attributes.createdAt` | `date` | ISO 8601 → YYYY-MM-DD |
 | `attributes.message` | `notes` | Optional; transfer memo or message |
-| `attributes.rawText` | — | Available for logging / debugging |
+| — | `cleared` | Always `true` (only SETTLED transactions are imported) |
 
 ## Project Structure
 
@@ -133,8 +132,10 @@ up-to-actual/
 │   ├── actual.js           # Actual Budget API client — import transactions
 │   ├── transform.js        # Schema mapping — Up → Actual format
 │   ├── config.js           # Secret loading — env vars / cloud secrets
-│   └── notify.js           # Webhook notifications — success/failure alerts
-├── logs/                   # Structured JSON log output (gitignored)
+│   ├── logger.js           # Structured JSON logging
+│   ├── notify.js           # Webhook notifications — success/failure alerts
+│   ├── test-up.js          # Test script: verify Up Bank API token
+│   └── test-actual.js      # Test script: list Actual accounts (find account ID)
 ├── .env.example            # Template showing required environment variables
 ├── .gitignore
 ├── package.json
