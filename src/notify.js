@@ -106,4 +106,4 @@ async function notifyFailure(errorMessage, attempts) {
   await sendNotification(message);
 }
 
-module.exports = { sendNotification, notifySuccess, notifyFailure };
+module.exports = { isDiscordWebhook, sendNotification, notifySuccess, notifyFailure };

@@ -36,34 +36,34 @@ function validateConfig() {
 }
 
 /**
- * Frozen configuration object.
+ * Deep-frozen configuration object.
  * Calling validateConfig() before accessing this is recommended.
  */
 const config = Object.freeze({
   // Up Bank
-  up: {
+  up: Object.freeze({
     apiToken: process.env.UP_API_TOKEN,
     baseUrl: 'https://api.up.com.au/api/v1',
-  },
+  }),
 
   // Actual Budget
-  actual: {
+  actual: Object.freeze({
     serverUrl: process.env.ACTUAL_SERVER_URL,
     password: process.env.ACTUAL_PASSWORD,
     syncId: process.env.ACTUAL_SYNC_ID,
     accountId: process.env.ACTUAL_ACCOUNT_ID,
     e2ePassword: process.env.ACTUAL_E2E_PASSWORD || null,
     dataDir: process.env.ACTUAL_DATA_DIR || './actual-data',
-  },
+  }),
 
   // Notifications
   webhookUrl: process.env.WEBHOOK_URL || null,
 
   // Sync settings
-  sync: {
+  sync: Object.freeze({
     windowHours: parseInt(process.env.SYNC_WINDOW_HOURS, 10) || 48,
     maxRetries: parseInt(process.env.MAX_RETRIES, 10) || 4,
-  },
+  }),
 
   // Logging
   logLevel: process.env.LOG_LEVEL || 'info',
