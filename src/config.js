@@ -28,10 +28,13 @@ function validateConfig() {
   const missing = REQUIRED_VARS.filter((key) => !process.env[key]);
 
   if (missing.length > 0) {
-    console.error('ERROR: Missing required environment variables:');
-    missing.forEach((key) => console.error(`  - ${key}`));
-    console.error('\nCopy .env.example to .env and fill in your values.');
-    process.exit(1);
+    const lines = [
+      'Missing required environment variables:',
+      ...missing.map((key) => `  - ${key}`),
+      '',
+      'Copy .env.example to .env and fill in your values.',
+    ];
+    throw new Error(lines.join('\n'));
   }
 }
 

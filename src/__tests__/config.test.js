@@ -1,4 +1,4 @@
-const { describe, it, beforeEach, afterEach, mock } = require('node:test');
+const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { clearModuleCache } = require('./helpers/fixtures');
 
@@ -18,11 +18,9 @@ function stubDotenv() {
 
 describe('validateConfig', () => {
   let originalEnv;
-  let exitMock;
 
   beforeEach(() => {
     originalEnv = { ...process.env };
-    exitMock = mock.method(process, 'exit', () => {});
     stubDotenv();
     // Set all required vars
     process.env.UP_API_TOKEN = 'up:yeah:test-token';
@@ -38,40 +36,43 @@ describe('validateConfig', () => {
     process.env = originalEnv;
     // Restore real dotenv
     delete require.cache[require.resolve('dotenv')];
-    mock.restoreAll();
   });
 
-  it('does not exit when all required vars are present', () => {
+  it('does not throw when all required vars are present', () => {
     const { validateConfig } = require('../config');
-    validateConfig();
-    assert.equal(exitMock.mock.calls.length, 0);
+    assert.doesNotThrow(() => validateConfig());
   });
 
-  it('calls process.exit(1) when UP_API_TOKEN is missing', () => {
+  it('throws when UP_API_TOKEN is missing', () => {
     delete process.env.UP_API_TOKEN;
     clearModuleCache(['config']);
     const { validateConfig } = require('../config');
-    validateConfig();
-    assert.equal(exitMock.mock.calls.length, 1);
-    assert.equal(exitMock.mock.calls[0].arguments[0], 1);
+    assert.throws(() => validateConfig(), {
+      message: /UP_API_TOKEN/,
+    });
   });
 
-  it('calls process.exit(1) when ACTUAL_SERVER_URL is missing', () => {
+  it('throws when ACTUAL_SERVER_URL is missing', () => {
     delete process.env.ACTUAL_SERVER_URL;
     clearModuleCache(['config']);
     const { validateConfig } = require('../config');
-    validateConfig();
-    assert.equal(exitMock.mock.calls.length, 1);
+    assert.throws(() => validateConfig(), {
+      message: /ACTUAL_SERVER_URL/,
+    });
   });
 
-  it('calls process.exit(1) when multiple vars are missing', () => {
+  it('throws when multiple vars are missing', () => {
     delete process.env.UP_API_TOKEN;
     delete process.env.ACTUAL_PASSWORD;
     delete process.env.ACTUAL_SYNC_ID;
     clearModuleCache(['config']);
     const { validateConfig } = require('../config');
-    validateConfig();
-    assert.equal(exitMock.mock.calls.length, 1);
+    assert.throws(() => validateConfig(), (err) => {
+      assert.ok(err.message.includes('UP_API_TOKEN'));
+      assert.ok(err.message.includes('ACTUAL_PASSWORD'));
+      assert.ok(err.message.includes('ACTUAL_SYNC_ID'));
+      return true;
+    });
   });
 });
 
