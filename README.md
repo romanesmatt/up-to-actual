@@ -2,6 +2,8 @@
 
 An automated transaction sync service that bridges [Up Bank](https://up.com.au/) (Australian neobank) and [Actual Budget](https://actualbudget.org/) (open-source budgeting software). Fetches transactions from Up's REST API and imports them into Actual Budget via its Node.js API on a scheduled basis.
 
+Deployed as a serverless **Azure Functions** timer trigger — runs daily at 2am Melbourne time for ~$0/month.
+
 ## Why This Exists
 
 Up Bank is an Australian neobank with an excellent [developer API](https://developer.up.com.au/). Actual Budget is an open-source, privacy-first budgeting tool. However, Actual Budget doesn't natively support bank feeds for Australian banks. This service acts as the intermediary layer — fetching transactions from Up and importing them into Actual Budget automatically.
@@ -12,15 +14,15 @@ Up Bank is an Australian neobank with an excellent [developer API](https://devel
 
 ```mermaid
 flowchart TB
-    subgraph Scheduler["⏰ Scheduler"]
-        CRON["Cron Job (Local)\nor\nCloud Timer Trigger"]
+    subgraph Scheduler["⏰ Azure Functions Timer Trigger"]
+        TIMER["Timer Trigger\nCron: 0 0 2 * * *\n(2am Melbourne time)"]
     end
 
-    subgraph Core["🔧 Orchestrator — index.js"]
+    subgraph Core["🔧 Sync Pipeline"]
         direction TB
-        ORCH["Orchestrator"]
-        RETRY["Retry Handler\n(Exponential Backoff\nMax 4 Attempts)"]
-        ORCH --> RETRY
+        SYNC["executeSyncAttempt()\nsrc/sync.js"]
+        RETRY["Azure Built-in Retry\n(Exponential Backoff\n5min → 15min → 45min)"]
+        SYNC --> RETRY
     end
 
     subgraph UpBank["🏦 Up Bank — upbank.js"]
@@ -28,7 +30,7 @@ flowchart TB
     end
 
     subgraph Transform["🔄 Transformer — transform.js"]
-        MAP["Schema Mapping\nUp → Actual Format\n\n• description → payee_name\n• amount.value → amount (integer)\n• createdAt → date\n• id → imported_id"]
+        MAP["Schema Mapping\nUp → Actual Format\n\n• description → payee_name\n• valueInBaseUnits → amount\n• createdAt → date\n• id → imported_id"]
     end
 
     subgraph ActualBudget["📒 Actual Budget — actual.js"]
@@ -36,7 +38,7 @@ flowchart TB
     end
 
     subgraph Secrets["🔐 Secrets — config.js"]
-        ENV["Environment Variables\n(.env → dotenv)\n\nCloud: AWS Secrets Manager\nor Azure Key Vault"]
+        ENV["Azure Application Settings\n(Encrypted at rest)\n\nLocal: .env via dotenv"]
     end
 
     subgraph Notify["📣 Notifications — notify.js"]
@@ -44,16 +46,16 @@ flowchart TB
     end
 
     subgraph Logging["📝 Logging"]
-        LOG["Structured JSON Logs\n\n• Transactions fetched\n• Transactions imported\n• Errors encountered\n• Duplicates skipped"]
+        LOG["Structured JSON Logs\n→ Azure Application Insights\n\n• Transactions fetched\n• Transactions imported\n• Errors encountered\n• Duplicates skipped"]
     end
 
-    CRON -->|"Triggers at 2:00am AEST"| ORCH
-    ORCH -->|"1. Fetch Transactions"| UP_API
+    TIMER -->|"Triggers at 2:00am AEST"| SYNC
+    SYNC -->|"1. Fetch Transactions"| UP_API
     UP_API -->|"JSON Response"| MAP
     MAP -->|"Transformed Transactions"| AB_API
-    AB_API -->|"Import Result"| ORCH
-    ORCH -->|"On Success / Failure"| WEBHOOK
-    ORCH -->|"Every Run"| LOG
+    AB_API -->|"Import Result"| SYNC
+    SYNC -->|"On Success / Failure"| WEBHOOK
+    SYNC -->|"Every Run"| LOG
     RETRY -->|"On Failure"| UP_API
     Secrets -.->|"Credentials"| UP_API
     Secrets -.->|"Credentials"| AB_API
@@ -63,8 +65,8 @@ flowchart TB
 
 ```mermaid
 sequenceDiagram
-    participant Cron as ⏰ Cron / Timer
-    participant Orch as 🔧 Orchestrator
+    participant Timer as ⏰ Azure Timer
+    participant Sync as 🔧 Sync Pipeline
     participant Config as 🔐 Config
     participant Up as 🏦 Up Bank API
     participant Trans as 🔄 Transformer
@@ -72,28 +74,28 @@ sequenceDiagram
     participant Notify as 📣 Webhook
     participant Log as 📝 Logger
 
-    Cron->>Orch: Trigger sync
-    Orch->>Config: Load secrets (Up token, AB credentials)
-    Config-->>Orch: Credentials loaded
+    Timer->>Sync: Trigger sync
+    Sync->>Config: Validate secrets (Up token, AB credentials)
+    Config-->>Sync: Credentials validated
 
-    Orch->>Up: GET /transactions?filter[since]=48h ago
+    Sync->>Up: GET /transactions?filter[since]=48h ago
     alt API Available
-        Up-->>Orch: 200 OK — Transaction data (JSON)
-        Orch->>Trans: Transform Up → Actual schema
-        Trans-->>Orch: Transformed transactions
-        Orch->>AB: api.importTransactions(accountId, transactions)
-        AB-->>Orch: Import result (created, skipped duplicates)
-        Orch->>Log: Log success (count, duplicates, duration)
-        Orch->>Notify: ✅ Sync complete — X new, Y skipped
+        Up-->>Sync: 200 OK — Transaction data (JSON)
+        Sync->>Trans: Transform Up → Actual schema
+        Trans-->>Sync: Transformed transactions
+        Sync->>AB: api.importTransactions(accountId, transactions)
+        AB-->>Sync: Import result (created, skipped duplicates)
+        Sync->>Log: Log success (count, duplicates, duration)
+        Sync->>Notify: ✅ Sync complete — X new, Y skipped
     else API Unavailable (5xx / Timeout)
-        Up-->>Orch: Error
-        Orch->>Log: Log failure (attempt 1)
-        loop Retry (Max 4 Attempts, Exponential Backoff)
-            Note over Orch,Up: Wait 5m → 15m → 45m
-            Orch->>Up: Retry GET /transactions
+        Up-->>Sync: Error
+        Sync->>Log: Log failure (attempt 1)
+        loop Azure Retry (Max 4 Attempts, Exponential Backoff)
+            Note over Sync,Up: Wait 5m → 15m → 45m
+            Sync->>Up: Retry GET /transactions
         end
-        Orch->>Log: Log final failure
-        Orch->>Notify: ❌ Sync failed after 4 attempts
+        Sync->>Log: Log final failure
+        Sync->>Notify: ❌ Sync failed after 4 attempts
     end
 ```
 
@@ -127,16 +129,33 @@ flowchart LR
 ```
 up-to-actual/
 ├── src/
-│   ├── index.js            # Main orchestrator — retry logic, flow control
-│   ├── upbank.js           # Up Bank API client — fetch transactions
-│   ├── actual.js           # Actual Budget API client — import transactions
-│   ├── transform.js        # Schema mapping — Up → Actual format
-│   ├── config.js           # Secret loading — env vars / cloud secrets
-│   ├── logger.js           # Structured JSON logging
-│   ├── notify.js           # Webhook notifications — success/failure alerts
-│   ├── test-up.js          # Test script: verify Up Bank API token
-│   └── test-actual.js      # Test script: list Actual accounts (find account ID)
-├── .env.example            # Template showing required environment variables
+│   ├── index.js              # CLI entry point — retry logic, process lifecycle
+│   ├── sync.js               # Core sync logic — shared between CLI and Azure
+│   ├── upbank.js             # Up Bank API client — fetch transactions
+│   ├── actual.js             # Actual Budget API client — import transactions
+│   ├── transform.js          # Schema mapping — Up → Actual format
+│   ├── config.js             # Secret loading — env vars / Azure App Settings
+│   ├── backoff.js            # Exponential backoff calculation
+│   ├── logger.js             # Structured JSON logging
+│   ├── notify.js             # Webhook notifications — success/failure alerts
+│   ├── test-up.js            # Test script: verify Up Bank API token
+│   ├── test-actual.js        # Test script: list Actual accounts (find account ID)
+│   ├── functions/
+│   │   └── syncTimer.js      # Azure Functions v4 timer trigger
+│   └── __tests__/            # Unit test suite (69 tests, node:test runner)
+│       ├── helpers/
+│       │   └── fixtures.js   # Shared test utilities and factories
+│       ├── transform.test.js
+│       ├── backoff.test.js
+│       ├── config.test.js
+│       ├── logger.test.js
+│       ├── notify.test.js
+│       ├── upbank.test.js
+│       └── actual.test.js
+├── host.json                 # Azure Functions host configuration
+├── .funcignore               # Azure Functions deployment exclusions
+├── local.settings.json.example  # Template for local Azure Functions dev
+├── .env.example              # Template for local CLI execution
 ├── .gitignore
 ├── package.json
 ├── LICENSE
@@ -145,7 +164,7 @@ up-to-actual/
 
 ## Prerequisites
 
-- **Node.js** >= 18.x
+- **Node.js** >= 18.x (uses native `fetch`)
 - **An Up Bank account** with a [Personal Access Token](https://api.up.com.au)
 - **An Actual Budget instance** (self-hosted or [PikaPods](https://www.pikapods.com/pods?run=actual))
 - Your Actual Budget **Sync ID** (Settings → Show advanced settings → Sync ID)
@@ -166,39 +185,67 @@ cp .env.example .env
 | `ACTUAL_SYNC_ID` | Budget file Sync ID from Actual settings | ✅ |
 | `ACTUAL_ACCOUNT_ID` | Account ID in Actual to import transactions into | ✅ |
 | `ACTUAL_E2E_PASSWORD` | End-to-end encryption password (if enabled) | ❌ |
+| `ACTUAL_DATA_DIR` | Local data cache directory (default: `./actual-data`) | ❌ |
 | `WEBHOOK_URL` | Notification webhook URL (Ntfy / Discord / Pushover) | ❌ |
 | `SYNC_WINDOW_HOURS` | Hours of transaction history to fetch (default: 48) | ❌ |
 | `MAX_RETRIES` | Maximum retry attempts on failure (default: 4) | ❌ |
 | `LOG_LEVEL` | Logging verbosity: debug, info, warn, error (default: info) | ❌ |
 
-> ⚠️ **Security**: Never commit `.env` files. The `.gitignore` in this repo excludes `.env` and `logs/` by default. When deploying to cloud, use AWS Secrets Manager or Azure Key Vault instead of environment variables.
+> **Security**: Never commit `.env` or `local.settings.json` files. Both are excluded via `.gitignore`. In Azure, secrets are stored as Application Settings (encrypted at rest).
 
 ## Usage
 
-### Manual Run
+### Local (CLI)
 
 ```bash
-node src/index.js
+# Install dependencies
+npm install
+
+# Run tests (69 tests, zero external dependencies)
+npm test
+
+# Verify API connections
+npm run test:up       # Check Up Bank token
+npm run test:actual   # List Actual Budget accounts
+
+# Run sync manually
+npm start
 ```
 
-### Scheduled (Cron)
+### Azure Functions (Production)
+
+The service is deployed as an Azure Functions timer trigger that runs automatically at 2am Melbourne time daily. See [AZURE-DEPLOYMENT.md](./AZURE-DEPLOYMENT.md) for the full deployment guide.
 
 ```bash
-# Edit crontab
-crontab -e
-
-# Add entry — runs daily at 2:00am AEST (16:00 UTC)
-0 16 * * * cd /path/to/up-to-actual && node src/index.js >> logs/cron.log 2>&1
+# Deploy to Azure
+func azure functionapp publish up-to-actual --javascript --build remote
 ```
 
-### Cloud Deployment (Future)
+### Monitoring
 
-This service is designed to be cloud-agnostic. The local Node.js implementation can be deployed to:
+After deployment, monitor via the Azure Portal:
 
-- **AWS Lambda** + EventBridge (CloudWatch Events) for scheduled triggers
-- **Azure Functions** + Timer Trigger for scheduled triggers
+1. **Function App → Functions → syncTimer → Monitor** — Invocation history
+2. **Application Insights** — Detailed logs, traces, and failure alerts
 
-Secrets would be managed via AWS Secrets Manager or Azure Key Vault respectively, with `config.js` abstracting the provider.
+## Testing
+
+69 unit tests using Node's built-in test runner (`node:test`). Zero test dependencies.
+
+```bash
+npm test                                    # Run full suite
+node --test src/__tests__/transform.test.js # Run single file
+```
+
+| Module | Tests | What's Covered |
+|--------|-------|----------------|
+| `transform` | 13 | Date extraction, field mapping, batch transform |
+| `backoff` | 4 | Delay formula verification |
+| `config` | 12 | Validation, defaults, parsing, immutability |
+| `logger` | 10 | Level filtering, JSON format, stream routing |
+| `notify` | 10 | Discord detection, webhook calls, error resilience |
+| `upbank` | 10 | Ping, pagination, rate limiting, error handling |
+| `actual` | 10 | Connect, import, disconnect, E2E encryption |
 
 ## Design Decisions
 
@@ -216,15 +263,27 @@ The tradeoff is marginally more API calls, which is negligible for a single spen
 
 Actual Budget's API offers both methods. `importTransactions` runs the reconciliation engine — matching against existing transactions and deduplicating via `imported_id`. `addTransactions` is for raw data dumps with no deduplication. Since we're syncing incrementally with overlap, deduplication is essential.
 
-### Why Cron + Polling (v1) Instead of Webhooks?
+### Why Azure Functions?
 
-Up Bank supports webhooks natively, which would enable real-time transaction syncing. However, webhooks require a publicly accessible endpoint, which adds complexity (HTTPS, authentication, infrastructure). The cron-based polling approach is simpler to implement, debug, and deploy — especially locally. A webhook-based v2 is a natural evolution once the core logic is proven.
+- **Cost**: Consumption plan — ~30 invocations/month vs 1M free tier = $0.00/month
+- **Reliability**: Managed timer with persistent state, built-in retry, Application Insights monitoring
+- **Simplicity**: No server to maintain, no VM to keep running, no cron to configure
+- **DST-aware**: `WEBSITE_TIME_ZONE=Australia/Melbourne` handles daylight saving automatically
+
+### Why a Thin Wrapper Architecture?
+
+The core sync logic lives in `src/sync.js` and is shared between the CLI entry point (`index.js`) and the Azure Functions trigger (`syncTimer.js`). This means:
+
+- `npm start` still works locally for testing and development
+- The Azure Function is just a ~30-line adapter with no business logic
+- All 69 unit tests validate the same code that runs in production
 
 ## Future Roadmap
 
-- [ ] **v1.0** — Core sync: Up → Actual via cron (local)
-- [ ] **v1.1** — Cloud deployment (AWS Lambda or Azure Functions)
-- [ ] **v1.2** — Multi-account support (spending + savings)
+- [x] **v1.0** — Core sync: Up → Actual via CLI
+- [x] **v1.1** — Unit test suite (69 tests)
+- [x] **v1.2** — Azure Functions deployment (serverless)
+- [ ] **v1.3** — Multi-account support (spending + savings)
 - [ ] **v2.0** — Real-time sync via Up Bank webhooks
 
 ## Related Projects
