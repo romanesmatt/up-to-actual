@@ -16,9 +16,7 @@
  */
 
 const { config, validateConfig } = require('./config');
-const { ping, fetchTransactions } = require('./upbank');
-const { transformTransactions } = require('./transform');
-const { connect, importTransactions, disconnect } = require('./actual');
+const { executeSyncAttempt } = require('./sync');
 const { notifySuccess, notifyFailure } = require('./notify');
 const { getBackoffDelay } = require('./backoff');
 const logger = require('./logger');
@@ -31,48 +29,6 @@ const logger = require('./logger');
  */
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Execute a single sync attempt.
- * Returns the result on success, throws on failure.
- *
- * @returns {Promise<Object>} { result, fetchedCount, durationMs }
- */
-async function executeSyncAttempt() {
-  const startTime = Date.now();
-
-  // Step 1: Verify Up Bank API is reachable and token is valid
-  await ping();
-
-  // Step 2: Fetch settled transactions from the rolling window
-  const upTransactions = await fetchTransactions();
-
-  if (upTransactions.length === 0) {
-    logger.info('No transactions to sync in the current window');
-    return {
-      result: { errors: [], added: [], updated: [] },
-      fetchedCount: 0,
-      durationMs: Date.now() - startTime,
-    };
-  }
-
-  // Step 3: Transform Up transactions to Actual format
-  const actualTransactions = transformTransactions(upTransactions);
-
-  // Step 4: Connect to Actual Budget and import
-  await connect();
-  let result;
-  try {
-    result = await importTransactions(actualTransactions);
-  } finally {
-    // Always disconnect, even if import fails, to release resources
-    await disconnect();
-  }
-
-  const durationMs = Date.now() - startTime;
-
-  return { result, fetchedCount: upTransactions.length, durationMs };
 }
 
 /**
@@ -135,7 +91,12 @@ async function main() {
 }
 
 // Validate config before anything else
-validateConfig();
+try {
+  validateConfig();
+} catch (err) {
+  console.error('ERROR:', err.message);
+  process.exit(1);
+}
 
 // Run
 main().catch((error) => {

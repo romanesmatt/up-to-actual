@@ -1,0 +1,31 @@
+# Source control
+.git*
+
+# Local secrets
+.env
+.env.example
+local.settings.json
+
+# Tests
+src/__tests__/
+src/test-up.js
+src/test-actual.js
+*.test.js
+
+# Documentation
+README.md
+LICENSE
+
+# Actual Budget local data cache
+actual-data/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Claude worktrees
+.claude/

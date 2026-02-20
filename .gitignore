@@ -3,6 +3,7 @@ node_modules/
 
 # Local secrets (NEVER commit)
 .env
+local.settings.json
 
 # Actual Budget local data cache
 actual-data/

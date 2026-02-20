@@ -1,0 +1,17 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "UP_API_TOKEN": "up:yeah:your-token-here",
+    "ACTUAL_SERVER_URL": "https://your-instance.pikapods.net",
+    "ACTUAL_PASSWORD": "your-password",
+    "ACTUAL_SYNC_ID": "your-sync-id",
+    "ACTUAL_ACCOUNT_ID": "your-account-id",
+    "ACTUAL_DATA_DIR": "/tmp/actual-data",
+    "WEBHOOK_URL": "",
+    "SYNC_WINDOW_HOURS": "48",
+    "MAX_RETRIES": "1",
+    "LOG_LEVEL": "info"
+  }
+}
