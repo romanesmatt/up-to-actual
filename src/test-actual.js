@@ -46,18 +46,29 @@ async function main() {
   console.log('   ' + '-'.repeat(70));
 
   const accounts = await api.getAccounts();
+
+  if (accounts.length === 0) {
+    throw new Error('No accounts found in budget. Check your ACTUAL_SYNC_ID.');
+  }
+
+  // Validate account response shape
   for (const account of accounts) {
+    if (!account.id) throw new Error('Account missing id field');
+    if (!account.name) throw new Error('Account missing name field');
+
     const closed = account.closed ? ' (CLOSED)' : '';
     console.log(
       `   ID: ${account.id}\n` +
       `   Name: ${account.name}${closed}\n` +
-      `   Type: ${account.type || 'N/A'}\n` +
-      `   ' + '-'.repeat(70)`
+      `   Type: ${account.type || 'N/A'}`
     );
+    console.log('   ' + '-'.repeat(70));
   }
 
+  console.log(`   ✅ Found ${accounts.length} account(s) with valid schema\n`);
+
   console.log(
-    `\n   Copy the ID of the account you want to sync with Up Bank\n` +
+    `   Copy the ID of the account you want to sync with Up Bank\n` +
     `   and set it as ACTUAL_ACCOUNT_ID in your .env file.`
   );
 

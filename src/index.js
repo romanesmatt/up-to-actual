@@ -20,19 +20,8 @@ const { ping, fetchTransactions } = require('./upbank');
 const { transformTransactions } = require('./transform');
 const { connect, importTransactions, disconnect } = require('./actual');
 const { notifySuccess, notifyFailure } = require('./notify');
+const { getBackoffDelay } = require('./backoff');
 const logger = require('./logger');
-
-/**
- * Calculate the delay in milliseconds for exponential backoff.
- * Attempt 1 → 5 min, Attempt 2 → 15 min, Attempt 3 → 45 min
- *
- * @param {number} attempt — Current attempt number (0-indexed)
- * @returns {number} Delay in milliseconds
- */
-function getBackoffDelay(attempt) {
-  const baseDelayMs = 5 * 60 * 1000; // 5 minutes
-  return baseDelayMs * Math.pow(3, attempt);
-}
 
 /**
  * Sleep for the specified duration.
