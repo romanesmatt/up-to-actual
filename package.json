@@ -2,7 +2,7 @@
   "name": "up-to-actual",
   "version": "1.0.0",
   "description": "Automated transaction sync between Up Bank (Australia) and Actual Budget",
-  "main": "src/index.js",
+  "main": "src/functions/syncTimer.js",
   "scripts": {
     "start": "node src/index.js",
     "test": "node --test 'src/__tests__/**/*.test.js'",
