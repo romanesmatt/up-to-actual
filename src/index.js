@@ -4,7 +4,7 @@
  * Coordinates the full sync pipeline:
  *   1. Validate configuration
  *   2. Ping Up Bank API (verify auth)
- *   3. Fetch settled transactions (last 48h)
+ *   3. Fetch settled transactions (last 7 days)
  *   4. Transform Up → Actual format
  *   5. Connect to Actual Budget
  *   6. Import transactions (with deduplication)

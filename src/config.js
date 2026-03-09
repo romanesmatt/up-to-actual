@@ -64,7 +64,7 @@ const config = Object.freeze({
 
   // Sync settings
   sync: Object.freeze({
-    windowHours: parseInt(process.env.SYNC_WINDOW_HOURS, 10) || 48,
+    windowHours: parseInt(process.env.SYNC_WINDOW_HOURS, 10) || 168,
     maxRetries: parseInt(process.env.MAX_RETRIES, 10) || 4,
   }),
 

@@ -101,11 +101,11 @@ describe('config object', () => {
     assert.equal(config.up.apiToken, 'up:yeah:test-token');
   });
 
-  it('defaults sync window to 48 hours', () => {
+  it('defaults sync window to 168 hours', () => {
     delete process.env.SYNC_WINDOW_HOURS;
     clearModuleCache(['config']);
     const { config } = require('../config');
-    assert.equal(config.sync.windowHours, 48);
+    assert.equal(config.sync.windowHours, 168);
   });
 
   it('parses SYNC_WINDOW_HOURS as an integer', () => {
