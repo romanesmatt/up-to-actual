@@ -67,7 +67,11 @@ describe('upbank', () => {
 
   describe('fetchTransactions', () => {
     it('returns transactions from a single page', async () => {
-      const txns = [makeUpTransaction({ id: 'txn_1' }), makeUpTransaction({ id: 'txn_2' })];
+      const recentSettle = new Date(Date.now() - 3600000).toISOString(); // 1 hour ago
+      const txns = [
+        makeUpTransaction({ id: 'txn_1', attributes: { settledAt: recentSettle } }),
+        makeUpTransaction({ id: 'txn_2', attributes: { settledAt: recentSettle } }),
+      ];
       globalThis.fetch = mock.fn(() =>
         Promise.resolve(mockFetchResponse({
           data: txns,
@@ -83,8 +87,9 @@ describe('upbank', () => {
     });
 
     it('follows pagination and concatenates results', async () => {
-      const page1 = [makeUpTransaction({ id: 'txn_1' })];
-      const page2 = [makeUpTransaction({ id: 'txn_2' })];
+      const recentSettle = new Date(Date.now() - 3600000).toISOString(); // 1 hour ago
+      const page1 = [makeUpTransaction({ id: 'txn_1', attributes: { settledAt: recentSettle } })];
+      const page2 = [makeUpTransaction({ id: 'txn_2', attributes: { settledAt: recentSettle } })];
 
       let callCount = 0;
       globalThis.fetch = mock.fn(() => {
@@ -122,7 +127,7 @@ describe('upbank', () => {
       assert.deepEqual(result, []);
     });
 
-    it('includes correct query parameters', async () => {
+    it('includes correct query parameters with wider API lookback', async () => {
       const fetchMock = mock.fn(() =>
         Promise.resolve(mockFetchResponse({ data: [], links: { next: null } }))
       );
@@ -134,7 +139,16 @@ describe('upbank', () => {
       const url = new URL(fetchMock.mock.calls[0].arguments[0].toString());
       assert.equal(url.searchParams.get('filter[status]'), 'SETTLED');
       assert.equal(url.searchParams.get('page[size]'), '100');
-      assert.ok(url.searchParams.get('filter[since]')); // Should be an ISO date string
+
+      // filter[since] should use the wider API lookback (min 720 hours = 30 days),
+      // not the sync window directly
+      const sinceParam = url.searchParams.get('filter[since]');
+      assert.ok(sinceParam);
+      const sinceDate = new Date(sinceParam);
+      const now = new Date();
+      const hoursDiff = (now - sinceDate) / (1000 * 60 * 60);
+      // Should be at least 720 hours (30 days) back
+      assert.ok(hoursDiff >= 719, `API lookback should be at least 720 hours, got ${hoursDiff.toFixed(0)}`);
     });
 
     it('throws on HTTP 429 (rate limited)', async () => {
@@ -157,6 +171,72 @@ describe('upbank', () => {
       );
       const { fetchTransactions } = require('../upbank');
       await assert.rejects(() => fetchTransactions(), /500/);
+    });
+  });
+
+  describe('filterBySettledAt', () => {
+    it('keeps transactions settled within the window', () => {
+      const recentSettled = new Date();
+      recentSettled.setHours(recentSettled.getHours() - 1); // 1 hour ago
+
+      const txns = [
+        makeUpTransaction({ id: 'txn_recent', attributes: { settledAt: recentSettled.toISOString() } }),
+      ];
+
+      const { filterBySettledAt } = require('../upbank');
+      const result = filterBySettledAt(txns, 168);
+
+      assert.equal(result.length, 1);
+      assert.equal(result[0].id, 'txn_recent');
+    });
+
+    it('excludes transactions settled outside the window', () => {
+      const oldSettled = new Date();
+      oldSettled.setHours(oldSettled.getHours() - 200); // 200 hours ago, outside 168h window
+
+      const txns = [
+        makeUpTransaction({ id: 'txn_old', attributes: { settledAt: oldSettled.toISOString() } }),
+      ];
+
+      const { filterBySettledAt } = require('../upbank');
+      const result = filterBySettledAt(txns, 168);
+
+      assert.equal(result.length, 0);
+    });
+
+    it('captures transactions created before window but settled within it', () => {
+      const createdLongAgo = new Date();
+      createdLongAgo.setDate(createdLongAgo.getDate() - 10); // Created 10 days ago
+
+      const settledRecently = new Date();
+      settledRecently.setHours(settledRecently.getHours() - 2); // Settled 2 hours ago
+
+      const txns = [
+        makeUpTransaction({
+          id: 'txn_late_settle',
+          attributes: {
+            createdAt: createdLongAgo.toISOString(),
+            settledAt: settledRecently.toISOString(),
+          },
+        }),
+      ];
+
+      const { filterBySettledAt } = require('../upbank');
+      const result = filterBySettledAt(txns, 168);
+
+      assert.equal(result.length, 1);
+      assert.equal(result[0].id, 'txn_late_settle');
+    });
+
+    it('excludes transactions with null settledAt', () => {
+      const txns = [
+        makeUpTransaction({ id: 'txn_held', attributes: { settledAt: null } }),
+      ];
+
+      const { filterBySettledAt } = require('../upbank');
+      const result = filterBySettledAt(txns, 168);
+
+      assert.equal(result.length, 0);
     });
   });
 });

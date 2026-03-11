@@ -1,9 +1,14 @@
 /**
  * upbank.js — Up Bank API Client
  *
- * Fetches settled transactions from the Up Bank REST API for the
- * configured rolling time window. Handles cursor-based pagination
- * and rate limit awareness.
+ * Fetches settled transactions from the Up Bank REST API.
+ * Uses a two-tier filtering strategy:
+ *   1. API level: broad `filter[since]` lookback to limit data volume
+ *   2. Application level: precise `settledAt` filter for the sync window
+ *
+ * This is necessary because the Up Bank API's `filter[since]` filters
+ * on `createdAt`, not `settledAt`. Transactions created before the
+ * sync window but settled within it would otherwise be missed.
  *
  * Up Bank API Docs: https://developer.up.com.au/
  *
@@ -12,6 +17,12 @@
 
 const { config } = require('./config');
 const logger = require('./logger');
+
+// The API lookback is wider than the sync window to catch transactions
+// that were created (HELD) before the window but settled within it.
+// Minimum 30 days (720 hours), or 4x the sync window, whichever is larger.
+const API_LOOKBACK_MULTIPLIER = 4;
+const MIN_API_LOOKBACK_HOURS = 720;
 
 /**
  * Build the Authorization header for Up Bank API requests.
@@ -52,24 +63,49 @@ async function ping() {
 }
 
 /**
+ * Filter transactions to only those settled within the sync window.
+ *
+ * @param {Array} transactions — Up Bank transaction resources
+ * @param {number} windowHours — How recently a transaction must have settled
+ * @returns {Array} Transactions with settledAt within the window
+ */
+function filterBySettledAt(transactions, windowHours) {
+  const cutoff = new Date();
+  cutoff.setHours(cutoff.getHours() - windowHours);
+
+  return transactions.filter((txn) => {
+    const settledAt = txn.attributes?.settledAt;
+    if (!settledAt) return false;
+    return new Date(settledAt) >= cutoff;
+  });
+}
+
+/**
  * Fetch settled transactions from Up Bank within the configured time window.
  *
- * Uses filter[since] with an RFC 3339 datetime string to retrieve
- * transactions from the last `config.sync.windowHours` hours.
- * Only SETTLED transactions are fetched (not HELD/pending).
+ * Uses a two-tier filtering strategy:
+ *   1. API: broad `filter[since]` lookback (createdAt-based) to limit volume
+ *   2. Local: precise `settledAt` filter for the actual sync window
  *
+ * Only SETTLED transactions are fetched (not HELD/pending).
  * Handles cursor-based pagination by following `links.next` until null.
  *
  * @returns {Promise<Array>} Array of Up Bank transaction resource objects
  */
 async function fetchTransactions() {
+  const { windowHours } = config.sync;
+
+  // API-level lookback: wider than the sync window to catch late-settling
+  // transactions (e.g. international purchases, hotel holds).
+  const apiLookbackHours = Math.max(windowHours * API_LOOKBACK_MULTIPLIER, MIN_API_LOOKBACK_HOURS);
   const sinceDate = new Date();
-  sinceDate.setHours(sinceDate.getHours() - config.sync.windowHours);
+  sinceDate.setHours(sinceDate.getHours() - apiLookbackHours);
   const sinceISO = sinceDate.toISOString();
 
   logger.info('Fetching settled transactions from Up Bank', {
+    apiLookbackHours,
+    syncWindowHours: windowHours,
     since: sinceISO,
-    windowHours: config.sync.windowHours,
   });
 
   let allTransactions = [];
@@ -128,12 +164,23 @@ async function fetchTransactions() {
     url = nextLink ? new URL(nextLink) : null;
   }
 
-  logger.info('Finished fetching transactions from Up Bank', {
-    totalTransactions: allTransactions.length,
+  logger.info('Fetched transactions from Up Bank API', {
+    totalFromApi: allTransactions.length,
     pages: pageCount,
   });
 
-  return allTransactions;
+  // Local filter: keep only transactions settled within the sync window.
+  // This is the precise filter — the API lookback was intentionally broader.
+  const settled = filterBySettledAt(allTransactions, windowHours);
+
+  logger.info('Filtered to transactions settled within sync window', {
+    beforeFilter: allTransactions.length,
+    afterFilter: settled.length,
+    excluded: allTransactions.length - settled.length,
+    syncWindowHours: windowHours,
+  });
+
+  return settled;
 }
 
-module.exports = { ping, fetchTransactions };
+module.exports = { ping, fetchTransactions, filterBySettledAt };
