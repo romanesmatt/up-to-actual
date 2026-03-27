@@ -2,7 +2,7 @@
 
 An automated transaction sync service that bridges [Up Bank](https://up.com.au/) (Australian neobank) and [Actual Budget](https://actualbudget.org/) (open-source budgeting software). Fetches transactions from Up's REST API and imports them into Actual Budget via its Node.js API on a scheduled basis.
 
-Deployed as a serverless **Azure Functions** timer trigger — runs daily at 2am Melbourne time for ~$0/month.
+Runs as a lightweight cron job — designed for a Raspberry Pi or any always-on Linux host.
 
 ## Why This Exists
 
@@ -14,19 +14,19 @@ Up Bank is an Australian neobank with an excellent [developer API](https://devel
 
 ```mermaid
 flowchart TB
-    subgraph Scheduler["⏰ Azure Functions Timer Trigger"]
-        TIMER["Timer Trigger\nCron: 0 0 2 * * *\n(2am Melbourne time)"]
+    subgraph Scheduler["⏰ Cron (daily at 2am)"]
+        CRON["crontab\nnode src/index.js"]
     end
 
     subgraph Core["🔧 Sync Pipeline"]
         direction TB
         SYNC["executeSyncAttempt()\nsrc/sync.js"]
-        RETRY["Azure Built-in Retry\n(Exponential Backoff\n5min → 15min → 45min)"]
+        RETRY["Exponential Backoff Retry\n(5min → 15min → 45min)"]
         SYNC --> RETRY
     end
 
     subgraph UpBank["🏦 Up Bank — upbank.js"]
-        UP_API["Up REST API\nGET /transactions\n(Last 48 Hours)"]
+        UP_API["Up REST API\nGET /transactions\n(Last 7 Days)"]
     end
 
     subgraph Transform["🔄 Transformer — transform.js"]
@@ -38,7 +38,7 @@ flowchart TB
     end
 
     subgraph Secrets["🔐 Secrets — config.js"]
-        ENV["Azure Application Settings\n(Encrypted at rest)\n\nLocal: .env via dotenv"]
+        ENV[".env via dotenv\n(Never committed to git)"]
     end
 
     subgraph Notify["📣 Notifications — notify.js"]
@@ -46,10 +46,10 @@ flowchart TB
     end
 
     subgraph Logging["📝 Logging"]
-        LOG["Structured JSON Logs\n→ Azure Application Insights\n\n• Transactions fetched\n• Transactions imported\n• Errors encountered\n• Duplicates skipped"]
+        LOG["Structured JSON Logs\n→ stdout / log file\n\n• Transactions fetched\n• Transactions imported\n• Errors encountered\n• Duplicates skipped"]
     end
 
-    TIMER -->|"Triggers at 2:00am AEST"| SYNC
+    CRON -->|"Triggers at 2:00am"| SYNC
     SYNC -->|"1. Fetch Transactions"| UP_API
     UP_API -->|"JSON Response"| MAP
     MAP -->|"Transformed Transactions"| AB_API
@@ -65,7 +65,7 @@ flowchart TB
 
 ```mermaid
 sequenceDiagram
-    participant Timer as ⏰ Azure Timer
+    participant Cron as ⏰ Cron
     participant Sync as 🔧 Sync Pipeline
     participant Config as 🔐 Config
     participant Up as 🏦 Up Bank API
@@ -74,11 +74,11 @@ sequenceDiagram
     participant Notify as 📣 Webhook
     participant Log as 📝 Logger
 
-    Timer->>Sync: Trigger sync
+    Cron->>Sync: Trigger sync
     Sync->>Config: Validate secrets (Up token, AB credentials)
     Config-->>Sync: Credentials validated
 
-    Sync->>Up: GET /transactions?filter[since]=48h ago
+    Sync->>Up: GET /transactions?filter[since]=7d ago
     alt API Available
         Up-->>Sync: 200 OK — Transaction data (JSON)
         Sync->>Trans: Transform Up → Actual schema
@@ -90,7 +90,7 @@ sequenceDiagram
     else API Unavailable (5xx / Timeout)
         Up-->>Sync: Error
         Sync->>Log: Log failure (attempt 1)
-        loop Azure Retry (Max 4 Attempts, Exponential Backoff)
+        loop Retry (Max 4 Attempts, Exponential Backoff)
             Note over Sync,Up: Wait 5m → 15m → 45m
             Sync->>Up: Retry GET /transactions
         end
@@ -107,7 +107,7 @@ flowchart LR
     B -->|"Fail → Wait 15m"| C["Attempt 3\n2:20am"]
     C -->|"Fail → Wait 45m"| D["Attempt 4\n3:05am"]
     D -->|"Fail"| E["❌ Alert via Webhook\nSkip until next day"]
-    E -.->|"48h window ensures\nno data loss"| F["Next day's sync\npicks up everything"]
+    E -.->|"7-day window ensures\nno data loss"| F["Next day's sync\npicks up everything"]
 
     style E fill:#ff6b6b,color:#fff
     style F fill:#51cf66,color:#fff
@@ -129,20 +129,19 @@ flowchart LR
 ```
 up-to-actual/
 ├── src/
-│   ├── index.js              # CLI entry point — retry logic, process lifecycle
-│   ├── sync.js               # Core sync logic — shared between CLI and Azure
+│   ├── index.js              # Entry point — retry logic, signal handling
+│   ├── sync.js               # Core sync logic
 │   ├── upbank.js             # Up Bank API client — fetch transactions
 │   ├── actual.js             # Actual Budget API client — import transactions
 │   ├── transform.js          # Schema mapping — Up → Actual format
-│   ├── config.js             # Secret loading — env vars / Azure App Settings
+│   ├── config.js             # Secret loading — env vars via dotenv
 │   ├── backoff.js            # Exponential backoff calculation
 │   ├── logger.js             # Structured JSON logging
 │   ├── notify.js             # Webhook notifications — success/failure alerts
+│   ├── healthcheck.js        # Connectivity check (for Uptime Kuma)
 │   ├── test-up.js            # Test script: verify Up Bank API token
 │   ├── test-actual.js        # Test script: list Actual accounts (find account ID)
-│   ├── functions/
-│   │   └── syncTimer.js      # Azure Functions v4 timer trigger
-│   └── __tests__/            # Unit test suite (69 tests, node:test runner)
+│   └── __tests__/            # Unit test suite (node:test runner)
 │       ├── helpers/
 │       │   └── fixtures.js   # Shared test utilities and factories
 │       ├── transform.test.js
@@ -152,10 +151,8 @@ up-to-actual/
 │       ├── notify.test.js
 │       ├── upbank.test.js
 │       └── actual.test.js
-├── host.json                 # Azure Functions host configuration
-├── .funcignore               # Azure Functions deployment exclusions
-├── local.settings.json.example  # Template for local Azure Functions dev
-├── .env.example              # Template for local CLI execution
+├── crontab.example           # Cron schedule reference
+├── .env.example              # Template for environment variables
 ├── .gitignore
 ├── package.json
 ├── LICENSE
@@ -187,21 +184,21 @@ cp .env.example .env
 | `ACTUAL_E2E_PASSWORD` | End-to-end encryption password (if enabled) | ❌ |
 | `ACTUAL_DATA_DIR` | Local data cache directory (default: `./actual-data`) | ❌ |
 | `WEBHOOK_URL` | Notification webhook URL (Ntfy / Discord / Pushover) | ❌ |
-| `SYNC_WINDOW_HOURS` | Hours of transaction history to fetch (default: 48) | ❌ |
+| `SYNC_WINDOW_HOURS` | Hours of transaction history to fetch (default: 168 / 7 days) | ❌ |
 | `MAX_RETRIES` | Maximum retry attempts on failure (default: 4) | ❌ |
 | `LOG_LEVEL` | Logging verbosity: debug, info, warn, error (default: info) | ❌ |
 
-> **Security**: Never commit `.env` or `local.settings.json` files. Both are excluded via `.gitignore`. In Azure, secrets are stored as Application Settings (encrypted at rest).
+> **Security**: Never commit `.env` files. It is excluded via `.gitignore`.
 
 ## Usage
 
-### Local (CLI)
+### Setup
 
 ```bash
 # Install dependencies
 npm install
 
-# Run tests (69 tests, zero external dependencies)
+# Run tests
 npm test
 
 # Verify API connections
@@ -210,27 +207,63 @@ npm run test:actual   # List Actual Budget accounts
 
 # Run sync manually
 npm start
+
+# Run health check
+npm run healthcheck
 ```
 
-### Azure Functions (Production)
+### Cron Deployment (Raspberry Pi)
 
-The service is deployed as an Azure Functions timer trigger that runs automatically at 2am Melbourne time daily. See [AZURE-DEPLOYMENT.md](./AZURE-DEPLOYMENT.md) for the full deployment guide.
+1. Clone the repo and install dependencies:
+   ```bash
+   sudo mkdir -p /opt/up-to-actual
+   sudo chown $USER:$USER /opt/up-to-actual
+   git clone https://github.com/romanesmatt/up-to-actual.git /opt/up-to-actual
+   cd /opt/up-to-actual
+   npm install --production
+   cp .env.example .env
+   # Edit .env with your credentials
+   ```
+
+2. Set timezone (if not already Melbourne):
+   ```bash
+   sudo timedatectl set-timezone Australia/Melbourne
+   ```
+
+3. Create log directory:
+   ```bash
+   sudo mkdir -p /var/log/up-to-actual
+   sudo chown $USER:$USER /var/log/up-to-actual
+   ```
+
+4. Install the cron job:
+   ```bash
+   # View the example schedule
+   cat crontab.example
+
+   # Add to your crontab (runs daily at 2am)
+   crontab -e
+   # Paste: 0 2 * * * cd /opt/up-to-actual && /usr/bin/node src/index.js >> /var/log/up-to-actual/sync.log 2>&1
+   ```
+
+5. Verify it's installed:
+   ```bash
+   crontab -l
+   ```
+
+### Monitoring with Uptime Kuma
+
+The health check script (`npm run healthcheck`) validates connectivity to both APIs. Configure an Uptime Kuma "Push" monitor and chain it with the health check cron:
 
 ```bash
-# Deploy to Azure
-func azure functionapp publish up-to-actual --javascript --build remote
+0 */6 * * * cd /opt/up-to-actual && /usr/bin/node src/healthcheck.js && curl -fsS -o /dev/null https://kuma.local/api/push/xxxxx
 ```
 
-### Monitoring
-
-After deployment, monitor via the Azure Portal:
-
-1. **Function App → Functions → syncTimer → Monitor** — Invocation history
-2. **Application Insights** — Detailed logs, traces, and failure alerts
+See `crontab.example` for the full setup including log rotation.
 
 ## Testing
 
-69 unit tests using Node's built-in test runner (`node:test`). Zero test dependencies.
+Unit tests using Node's built-in test runner (`node:test`). Zero test dependencies.
 
 ```bash
 npm test                                    # Run full suite
@@ -249,9 +282,9 @@ node --test src/__tests__/transform.test.js # Run single file
 
 ## Design Decisions
 
-### Why a 48-Hour Rolling Window?
+### Why a 7-Day Rolling Window?
 
-Rather than tracking a precise "last sync" timestamp, this service fetches the last 48 hours of transactions on every run. This is an enterprise-standard pattern for idempotent data pipelines:
+Rather than tracking a precise "last sync" timestamp, this service fetches the last 7 days of settled transactions on every run. This is an idempotent data pipeline pattern:
 
 - **Resilience**: If a sync fails entirely, the next day's run picks up everything — no data gaps.
 - **Stateless**: No sync timestamp file to corrupt, lose, or get out of sync.
@@ -263,26 +296,18 @@ The tradeoff is marginally more API calls, which is negligible for a single spen
 
 Actual Budget's API offers both methods. `importTransactions` runs the reconciliation engine — matching against existing transactions and deduplicating via `imported_id`. `addTransactions` is for raw data dumps with no deduplication. Since we're syncing incrementally with overlap, deduplication is essential.
 
-### Why Azure Functions?
+### Why a Cron Job?
 
-- **Cost**: Consumption plan — ~30 invocations/month vs 1M free tier = $0.00/month
-- **Reliability**: Managed timer with persistent state, built-in retry, Application Insights monitoring
-- **Simplicity**: No server to maintain, no VM to keep running, no cron to configure
-- **DST-aware**: `WEBSITE_TIME_ZONE=Australia/Melbourne` handles daylight saving automatically
-
-### Why a Thin Wrapper Architecture?
-
-The core sync logic lives in `src/sync.js` and is shared between the CLI entry point (`index.js`) and the Azure Functions trigger (`syncTimer.js`). This means:
-
-- `npm start` still works locally for testing and development
-- The Azure Function is just a ~30-line adapter with no business logic
-- All 69 unit tests validate the same code that runs in production
+- **Cost**: $0 — runs on existing hardware
+- **Simplicity**: No cloud services, no vendor lock-in, no billing surprises
+- **Privacy**: All data stays on your local network
+- **Reliability**: Exponential backoff retry handles transient API failures; 7-day window ensures no data loss across missed runs
 
 ## Future Roadmap
 
 - [x] **v1.0** — Core sync: Up → Actual via CLI
 - [x] **v1.1** — Unit test suite (69 tests)
-- [x] **v1.2** — Azure Functions deployment (serverless)
+- [x] **v1.2** — Cron deployment with health checks
 - [ ] **v1.3** — Multi-account support (spending + savings)
 - [ ] **v2.0** — Real-time sync via Up Bank webhooks
 

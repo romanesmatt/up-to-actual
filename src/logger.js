@@ -2,9 +2,8 @@
  * logger.js — Structured JSON logging
  *
  * Outputs structured log entries with ISO timestamps, log levels,
- * and contextual data. Machine-parseable for cloud log aggregation
- * (CloudWatch, Azure Monitor) while remaining human-readable in
- * the terminal during local development.
+ * and contextual data. Machine-parseable for log aggregation while
+ * remaining human-readable in the terminal.
  *
  * Log levels: debug < info < warn < error
  */

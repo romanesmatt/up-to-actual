@@ -1,0 +1,32 @@
+# up-to-actual — Cron Configuration
+#
+# Install with: crontab -e (then paste the relevant line)
+#
+# Logs are appended to a file and rotated via logrotate or size.
+# Adjust paths to match your installation directory.
+
+# ── Sync (daily at 2am Melbourne time) ───────────────────────
+# The system cron uses the host timezone. Ensure your Raspberry Pi
+# is set to Australia/Melbourne:
+#   sudo timedatectl set-timezone Australia/Melbourne
+#
+0 2 * * * cd /opt/up-to-actual && /usr/bin/node src/index.js >> /var/log/up-to-actual/sync.log 2>&1
+
+# ── Health check (every 6 hours, for Uptime Kuma push monitor) ─
+# Optional: validates connectivity to Up Bank and Actual Budget.
+# Configure Uptime Kuma with a "Push" monitor and append the push
+# URL to the command, e.g.:
+#   && curl -fsS -o /dev/null https://kuma.local/api/push/xxxxx
+#
+0 */6 * * * cd /opt/up-to-actual && /usr/bin/node src/healthcheck.js >> /var/log/up-to-actual/healthcheck.log 2>&1
+
+# ── Log rotation ─────────────────────────────────────────────
+# Create /etc/logrotate.d/up-to-actual with:
+#
+#   /var/log/up-to-actual/*.log {
+#       weekly
+#       rotate 4
+#       compress
+#       missingok
+#       notifempty
+#   }

@@ -13,6 +13,9 @@
  *
  * Implements exponential backoff retry on transient failures.
  * Retry delays: 5min → 15min → 45min (max 4 attempts total).
+ *
+ * Designed to run as a cron job — handles SIGTERM/SIGINT for
+ * clean shutdown (ensures Actual Budget disconnect on interrupt).
  */
 
 const { config, validateConfig } = require('./config');
@@ -21,20 +24,53 @@ const { notifySuccess, notifyFailure } = require('./notify');
 const { getBackoffDelay } = require('./backoff');
 const logger = require('./logger');
 
+// Track whether a shutdown signal has been received
+let shutdownRequested = false;
+
 /**
  * Sleep for the specified duration.
+ * Resolves immediately if a shutdown signal is received.
  *
  * @param {number} ms — Duration in milliseconds
  * @returns {Promise<void>}
  */
 function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    // Allow shutdown to interrupt sleep between retries
+    const checkShutdown = setInterval(() => {
+      if (shutdownRequested) {
+        clearTimeout(timer);
+        clearInterval(checkShutdown);
+        resolve();
+      }
+    }, 1000);
+    // Clean up the interval when the timer fires naturally
+    setTimeout(() => clearInterval(checkShutdown), ms + 100);
+  });
+}
+
+/**
+ * Handle process signals for graceful shutdown.
+ * Logs the signal and sets the shutdown flag so the retry loop
+ * can exit cleanly rather than waiting through a long backoff.
+ */
+function registerSignalHandlers() {
+  const handler = (signal) => {
+    logger.warn(`Received ${signal} — shutting down gracefully`);
+    shutdownRequested = true;
+  };
+
+  process.on('SIGTERM', handler);
+  process.on('SIGINT', handler);
 }
 
 /**
  * Main entry point — run the sync with retry logic.
  */
 async function main() {
+  registerSignalHandlers();
+
   logger.info('=== Up to Actual sync starting ===', {
     windowHours: config.sync.windowHours,
     maxRetries: config.sync.maxRetries,
@@ -44,6 +80,11 @@ async function main() {
   let lastError = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (shutdownRequested) {
+      logger.warn('Shutdown requested — aborting sync');
+      process.exit(0);
+    }
+
     try {
       logger.info(`Sync attempt ${attempt} of ${maxAttempts}`);
 

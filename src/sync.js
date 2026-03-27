@@ -2,12 +2,10 @@
  * sync.js — Core sync logic
  *
  * Executes a single sync attempt: fetch transactions from Up Bank,
- * transform them, and import into Actual Budget. Used by both the
- * CLI entry point (index.js) and the Azure Functions timer trigger.
+ * transform them, and import into Actual Budget.
  *
- * This module is intentionally separated from index.js so that the
- * retry loop and process lifecycle concerns stay in their respective
- * entry points (CLI vs serverless).
+ * Separated from index.js so the retry loop and process lifecycle
+ * concerns remain in the entry point.
  */
 
 const fs = require('fs');
@@ -44,7 +42,7 @@ async function executeSyncAttempt() {
   // Step 3: Transform Up transactions to Actual format
   const actualTransactions = transformTransactions(upTransactions);
 
-  // Step 4: Ensure data directory exists (needed for /tmp on Azure)
+  // Step 4: Ensure data directory exists
   if (!fs.existsSync(config.actual.dataDir)) {
     fs.mkdirSync(config.actual.dataDir, { recursive: true });
   }
