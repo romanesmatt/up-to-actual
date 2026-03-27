@@ -2,7 +2,7 @@
 
 An automated transaction sync service that bridges [Up Bank](https://up.com.au/) (Australian neobank) and [Actual Budget](https://actualbudget.org/) (open-source budgeting software). Fetches transactions from Up's REST API and imports them into Actual Budget via its Node.js API on a scheduled basis.
 
-Runs as a lightweight cron job — designed for a Raspberry Pi or any always-on Linux host.
+Runs as a lightweight Docker container — designed for a Raspberry Pi or any always-on Linux host.
 
 ## Why This Exists
 
@@ -151,7 +151,10 @@ up-to-actual/
 │       ├── notify.test.js
 │       ├── upbank.test.js
 │       └── actual.test.js
-├── crontab.example           # Cron schedule reference
+├── Dockerfile                # Multi-stage Alpine build with crond
+├── docker-compose.yml        # Docker Compose service definition
+├── .dockerignore             # Docker build exclusions
+├── crontab.example           # Cron schedule reference (non-Docker)
 ├── .env.example              # Template for environment variables
 ├── .gitignore
 ├── package.json
@@ -161,7 +164,7 @@ up-to-actual/
 
 ## Prerequisites
 
-- **Node.js** >= 18.x (uses native `fetch`)
+- **Docker** and **Docker Compose** (or Node.js >= 18.x for non-Docker usage)
 - **An Up Bank account** with a [Personal Access Token](https://api.up.com.au)
 - **An Actual Budget instance** (self-hosted or [PikaPods](https://www.pikapods.com/pods?run=actual))
 - Your Actual Budget **Sync ID** (Settings → Show advanced settings → Sync ID)
@@ -192,7 +195,51 @@ cp .env.example .env
 
 ## Usage
 
-### Setup
+### Docker Deployment (Recommended)
+
+1. Clone the repo on your Raspberry Pi:
+   ```bash
+   git clone https://github.com/romanesmatt/up-to-actual.git
+   cd up-to-actual
+   ```
+
+2. Create your `.env` file:
+   ```bash
+   cp .env.example .env
+   nano .env  # Fill in your credentials
+   ```
+
+3. Build and start the container:
+   ```bash
+   docker compose up -d --build
+   ```
+
+4. Verify it's running:
+   ```bash
+   docker compose ps                             # Container status
+   docker compose logs                           # View logs
+   docker exec up-to-actual node src/index.js    # Run a manual sync
+   docker exec up-to-actual node src/healthcheck.js  # Test connectivity
+   ```
+
+The container runs `crond` in the foreground, executing the sync daily at 2am Melbourne time. Logs are available via `docker compose logs`. The Actual Budget data cache persists in a named Docker volume.
+
+To update after pulling new code:
+```bash
+git pull && docker compose up -d --build
+```
+
+### Monitoring with Uptime Kuma
+
+The Docker `HEALTHCHECK` directive runs the health check script every 6 hours automatically. In Uptime Kuma, add a **Docker Container** monitor pointing at the `up-to-actual` container to track its health status.
+
+Alternatively, for a push-based monitor:
+```bash
+# Add to host crontab (not inside the container)
+0 */6 * * * docker exec up-to-actual node src/healthcheck.js && curl -fsS -o /dev/null https://kuma.local/api/push/xxxxx
+```
+
+### Local Development
 
 ```bash
 # Install dependencies
@@ -212,54 +259,9 @@ npm start
 npm run healthcheck
 ```
 
-### Cron Deployment (Raspberry Pi)
+### Non-Docker Deployment
 
-1. Clone the repo and install dependencies:
-   ```bash
-   sudo mkdir -p /opt/up-to-actual
-   sudo chown $USER:$USER /opt/up-to-actual
-   git clone https://github.com/romanesmatt/up-to-actual.git /opt/up-to-actual
-   cd /opt/up-to-actual
-   npm install --production
-   cp .env.example .env
-   # Edit .env with your credentials
-   ```
-
-2. Set timezone (if not already Melbourne):
-   ```bash
-   sudo timedatectl set-timezone Australia/Melbourne
-   ```
-
-3. Create log directory:
-   ```bash
-   sudo mkdir -p /var/log/up-to-actual
-   sudo chown $USER:$USER /var/log/up-to-actual
-   ```
-
-4. Install the cron job:
-   ```bash
-   # View the example schedule
-   cat crontab.example
-
-   # Add to your crontab (runs daily at 2am)
-   crontab -e
-   # Paste: 0 2 * * * cd /opt/up-to-actual && /usr/bin/node src/index.js >> /var/log/up-to-actual/sync.log 2>&1
-   ```
-
-5. Verify it's installed:
-   ```bash
-   crontab -l
-   ```
-
-### Monitoring with Uptime Kuma
-
-The health check script (`npm run healthcheck`) validates connectivity to both APIs. Configure an Uptime Kuma "Push" monitor and chain it with the health check cron:
-
-```bash
-0 */6 * * * cd /opt/up-to-actual && /usr/bin/node src/healthcheck.js && curl -fsS -o /dev/null https://kuma.local/api/push/xxxxx
-```
-
-See `crontab.example` for the full setup including log rotation.
+If you prefer running without Docker, see `crontab.example` for host-level cron setup.
 
 ## Testing
 
@@ -296,9 +298,10 @@ The tradeoff is marginally more API calls, which is negligible for a single spen
 
 Actual Budget's API offers both methods. `importTransactions` runs the reconciliation engine — matching against existing transactions and deduplicating via `imported_id`. `addTransactions` is for raw data dumps with no deduplication. Since we're syncing incrementally with overlap, deduplication is essential.
 
-### Why a Cron Job?
+### Why Docker on a Raspberry Pi?
 
 - **Cost**: $0 — runs on existing hardware
+- **Consistency**: Same container runtime as the rest of the Pi's services
 - **Simplicity**: No cloud services, no vendor lock-in, no billing surprises
 - **Privacy**: All data stays on your local network
 - **Reliability**: Exponential backoff retry handles transient API failures; 7-day window ensures no data loss across missed runs
@@ -307,7 +310,7 @@ Actual Budget's API offers both methods. `importTransactions` runs the reconcili
 
 - [x] **v1.0** — Core sync: Up → Actual via CLI
 - [x] **v1.1** — Unit test suite (69 tests)
-- [x] **v1.2** — Cron deployment with health checks
+- [x] **v1.2** — Docker deployment with health checks
 - [ ] **v1.3** — Multi-account support (spending + savings)
 - [ ] **v2.0** — Real-time sync via Up Bank webhooks
 

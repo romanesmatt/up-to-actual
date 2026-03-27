@@ -1,0 +1,15 @@
+services:
+  up-to-actual:
+    build: .
+    container_name: up-to-actual
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - TZ=Australia/Melbourne
+      - ACTUAL_DATA_DIR=/app/actual-data
+    volumes:
+      - actual-data:/app/actual-data
+    mem_limit: 256m
+
+volumes:
+  actual-data:

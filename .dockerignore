@@ -1,0 +1,17 @@
+node_modules/
+actual-data/
+.env
+.env.*
+!.env.example
+.git/
+.gitignore
+.claude/
+.vscode/
+.idea/
+*.md
+!src/**
+LICENSE
+crontab.example
+src/__tests__/
+src/test-up.js
+src/test-actual.js
