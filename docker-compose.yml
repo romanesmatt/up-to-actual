@@ -4,6 +4,9 @@ services:
     container_name: up-to-actual
     restart: unless-stopped
     env_file: .env
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     environment:
       - TZ=Australia/Melbourne
       - ACTUAL_DATA_DIR=/app/actual-data
