@@ -9,7 +9,6 @@ services:
       - ACTUAL_DATA_DIR=/app/actual-data
     volumes:
       - actual-data:/app/actual-data
-    mem_limit: 256m
 
 volumes:
   actual-data:
